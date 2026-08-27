@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photobooth - Tablet</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin:0; font-family:-apple-system, Arial, sans-serif; background:#f7f1e3; color:#3b2f2a;
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px;
+  }
+  h1 { font-size:22px; font-weight:600; margin:8px 0; }
+  #codeBar { background:#fff; border-radius:12px; padding:12px 20px; margin-bottom:14px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+  #codeBar .label { font-size:12px; color:#8a7967; }
+  #codeBar .code { font-size:28px; font-weight:700; letter-spacing:4px; color:#c9793a; }
+  #codeBar .hint { font-size:12px; color:#8a7967; margin-top:4px; }
+  #stage { position:relative; width:90vw; max-width:640px; aspect-ratio:4/3; background:#e9e0cc; border-radius:16px; overflow:hidden; border:1px solid #e2d7bd; }
+  #stage img { width:100%; height:100%; object-fit:cover; position:absolute; top:0; left:0; }
+  #placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#a89878; font-size:15px; text-align:center; padding:20px; }
+  #countdown { position:absolute; inset:0; display:none; align-items:center; justify-content:center; font-size:96px; font-weight:bold; background:rgba(0,0,0,0.35); color:#fff; }
+  .row { display:flex; gap:12px; margin-top:16px; flex-wrap:wrap; justify-content:center; }
+  button { padding:12px 22px; font-size:16px; border-radius:10px; border:none; cursor:pointer; background:#c9793a; color:#fff; font-weight:600; }
+  button.secondary { background:#fff; color:#3b2f2a; border:1px solid #e2d7bd; }
+  button:disabled { opacity:0.4; cursor:default; }
+  select { padding:10px 14px; border-radius:10px; font-size:15px; border:1px solid #e2d7bd; background:#fff; color:#3b2f2a; }
+  #status { margin-top:10px; font-size:13px; color:#8a7967; text-align:center; }
+  #qrBox { display:none; background:#fff; padding:18px; border-radius:16px; margin-top:16px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+  #qrBox p { margin:8px 0 0; font-size:13px; color:#8a7967; }
+</style>
+</head>
+<body>
+<h1>Photobooth</h1>
+
+<div id="codeBar">
+  <div class="label">Kode Room (masukkan ini di HP kamera)</div>
+  <div class="code" id="roomCodeDisplay">------</div>
+  <div class="hint">Ketik kode baru di sini kalau mau ganti:
+    <input id="roomInput" style="text-transform:uppercase; width:90px; text-align:center; padding:4px; border-radius:6px; border:1px solid #e2d7bd;" maxlength="6">
+    <button class="secondary" id="applyRoomBtn" style="padding:6px 12px; font-size:13px;">Terapkan</button>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="placeholder">Menunggu HP kamera terhubung...</div>
+  <img id="preview" alt="preview kamera" style="display:none;">
+  <div id="countdown"></div>
+</div>
+
+<div class="row">
+  <select id="templateSelect"></select>
+  <button id="startBtn">Ambil Foto</button>
+  <button class="secondary" id="newSessionBtn">Sesi Baru</button>
+</div>
+<div id="status">Menunggu preview dari HP kamera...</div>
+<div id="qrBox">
+  <div id="qrcode"></div>
+  <p>Tamu scan QR ini untuk ambil hasil fotonya</p>
+</div>
+
+<script>
+function randomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+let room = (new URLSearchParams(location.search).get('room') || randomCode()).toUpperCase();
+let roomRef;
+
+const preview = document.getElementById('preview');
+const placeholder = document.getElementById('placeholder');
+const statusEl = document.getElementById('status');
+const countdownEl = document.getElementById('countdown');
+const qrBox = document.getElementById('qrBox');
+const qrcodeDiv = document.getElementById('qrcode');
+const startBtn = document.getElementById('startBtn');
+const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+const roomInput = document.getElementById('roomInput');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+
+const templates = [
+  { name: 'Polaroid Putih', border: 40, bottom: 120, bg: '#ffffff', text: '#222', caption: 'Photobooth' },
+  { name: 'Pesta Pink', border: 24, bottom: 90, bg: '#ffe3ef', text: '#7a1f43', caption: 'Congrats!' },
+  { name: 'Minimal Hitam', border: 16, bottom: 70, bg: '#111111', text: '#ffffff', caption: '' },
+];
+const templateSelect = document.getElementById('templateSelect');
+templates.forEach((t, i) => {
+  const opt = document.createElement('option');
+  opt.value = i; opt.textContent = t.name;
+  templateSelect.appendChild(opt);
+});
+
+function connectRoom(newRoom) {
+  room = newRoom.toUpperCase();
+  history.replaceState(null, '', '?room=' + room);
+  roomCodeDisplay.textContent = room;
+  roomInput.value = '';
+  roomInput.placeholder = room;
+
+  if (roomRef) {
+    roomRef.child('preview').off();
+    roomRef.child('capturedPhoto').off();
+  }
+  roomRef = db.ref('rooms/' + room);
+
+  placeholder.style.display = 'flex';
+  preview.style.display = 'none';
+  statusEl.textContent = 'Menunggu HP kamera terhubung dengan kode ' + room + '...';
+
+  roomRef.child('preview').on('value', (snap) => {
+    const val = snap.val();
+    if (val) {
+      preview.src = val;
+      preview.style.display = 'block';
+      placeholder.style.display = 'none';
+      statusEl.textContent = 'HP kamera terhubung.';
+    }
+  });
+
+  let lastProcessedTs = 0;
+  roomRef.child('capturedPhoto').on('value', (snap) => {
+    const val = snap.val();
+    if (val && val.ts !== lastProcessedTs) {
+      lastProcessedTs = val.ts;
+      countdownEl.style.display = 'none';
+      startBtn.disabled = false;
+      composeWithTemplate(val.dataUrl, templates[templateSelect.value]);
+    }
+  });
+}
+
+document.getElementById('applyRoomBtn').addEventListener('click', () => {
+  const val = roomInput.value.trim();
+  if (val.length >= 3) connectRoom(val);
+});
+
+startBtn.addEventListener('click', () => {
+  startBtn.disabled = true;
+  let n = 3;
+  countdownEl.style.display = 'flex';
+  countdownEl.textContent = n;
+  const timer = setInterval(() => {
+    n--;
+    if (n === 0) {
+      clearInterval(timer);
+      countdownEl.textContent = '📸';
+      roomRef.child('captureRequest').set(Date.now());
+    } else {
+      countdownEl.textContent = n;
+    }
+  }, 1000);
+});
+
+function composeWithTemplate(photoDataUrl, tpl) {
+  const img = new Image();
+  img.onload = () => {
+    const W = img.width + tpl.border * 2;
+    const H = img.height + tpl.border * 2 + tpl.bottom;
+    canvas.width = W; canvas.height = H;
+    ctx.fillStyle = tpl.bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(img, tpl.border, tpl.border);
+    ctx.fillStyle = tpl.text;
+    ctx.font = 'bold 36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(tpl.caption || new Date().toLocaleDateString('id-ID'), W / 2, H - tpl.bottom / 2 + 12);
+    uploadAndShowQr(canvas.toDataURL('image/jpeg', 0.9));
+  };
+  img.onerror = () => { statusEl.textContent = 'Gagal memproses foto hasil capture.'; startBtn.disabled = false; };
+  img.src = photoDataUrl;
+}
+
+async function uploadAndShowQr(dataUrl) {
+  statusEl.textContent = 'Mengunggah hasil...';
+  try {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const blob = await (await fetch(dataUrl)).blob();
+    const fileRef = storage.ref('photos/' + id + '.jpg');
+    await fileRef.put(blob);
+
+    const viewUrl = `${location.origin}${location.pathname.replace('tablet.html', 'view.html')}?id=${id}`;
+    qrcodeDiv.innerHTML = '';
+    new QRCode(qrcodeDiv, { text: viewUrl, width: 200, height: 200 });
+    qrBox.style.display = 'block';
+    statusEl.textContent = 'Selesai! Tamu bisa scan QR di bawah.';
+  } catch (err) {
+    statusEl.textContent = 'Gagal upload foto: ' + err.message;
+  }
+}
+
+document.getElementById('newSessionBtn').addEventListener('click', () => {
+  qrBox.style.display = 'none';
+  statusEl.textContent = 'Siap untuk sesi berikutnya.';
+});
+
+connectRoom(room);
+</script>
+</body>
+</html>
