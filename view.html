@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hasil Foto</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  body { margin:0; min-height:100vh; background:#f7f1e3; color:#3b2f2a; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:-apple-system, Arial, sans-serif; padding:24px; }
+  img { max-width:90vw; max-height:60vh; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.1); }
+  h2 { font-weight:600; }
+  .row { display:flex; gap:12px; margin-top:20px; flex-wrap:wrap; justify-content:center; }
+  button, a.btn { padding:12px 20px; border-radius:10px; border:none; font-size:15px; text-decoration:none; color:#3b2f2a; background:#fff; box-shadow:0 2px 6px rgba(0,0,0,0.08); cursor:pointer; font-weight:600; }
+  #wa { background:#25D366; color:#fff; }
+</style>
+</head>
+<body>
+<h2>Hasil foto kamu 🎉</h2>
+<img id="photo" alt="hasil foto" style="display:none;">
+<p id="loading">Memuat foto...</p>
+<div class="row" id="actions" style="display:none;">
+  <a class="btn" id="download">Download</a>
+  <button id="shareBtn">Bagikan</button>
+  <a class="btn" id="wa" href="#" target="_blank">Kirim via WhatsApp</a>
+</div>
+<p style="font-size:13px;color:#888;max-width:320px;text-align:center;">
+  Tombol "Bagikan" akan buka menu share HP kamu (termasuk WhatsApp) kalau didukung.
+</p>
+
+<script>
+const id = new URLSearchParams(location.search).get('id');
+const photoEl = document.getElementById('photo');
+const loadingEl = document.getElementById('loading');
+const actionsEl = document.getElementById('actions');
+
+if (!id) {
+  loadingEl.textContent = 'Link tidak valid.';
+} else {
+  storage.ref('photos/' + id + '.jpg').getDownloadURL()
+    .then(async (url) => {
+      photoEl.src = url;
+      photoEl.style.display = 'block';
+      loadingEl.style.display = 'none';
+      actionsEl.style.display = 'flex';
+
+      const blob = await (await fetch(url)).blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const downloadLink = document.getElementById('download');
+      downloadLink.href = objectUrl;
+      downloadLink.download = 'photobooth.jpg';
+
+      document.getElementById('shareBtn').addEventListener('click', async () => {
+        try {
+          const file = new File([blob], 'photobooth.jpg', { type: 'image/jpeg' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Hasil Photobooth' });
+          } else {
+            alert('Browser ini belum dukung share gambar langsung. Silakan Download lalu kirim manual.');
+          }
+        } catch (e) {
+          alert('Gagal share: ' + e.message);
+        }
+      });
+
+      document.getElementById('wa').href = 'https://wa.me/?text=' + encodeURIComponent('Ini hasil foto photobooth aku! ' + location.href);
+    })
+    .catch(() => {
+      loadingEl.textContent = 'Foto tidak ditemukan.';
+    });
+}
+</script>
+</body>
+</html>
