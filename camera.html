@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photobooth - Kamera</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  body { margin:0; background:#000; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:-apple-system, Arial, sans-serif; color:#fff; }
+  video { width:100%; max-width:480px; border-radius:8px; }
+  #status { margin-top:12px; font-size:14px; color:#aaa; text-align:center; padding:0 16px; }
+  button { margin-top:12px; padding:10px 18px; border-radius:8px; border:none; font-size:15px; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<div id="status">Menyiapkan...</div>
+<button id="startCam">Aktifkan Kamera</button>
+
+<script>
+const room = new URLSearchParams(location.search).get('room');
+const statusEl = document.getElementById('status');
+const video = document.getElementById('video');
+const startCamBtn = document.getElementById('startCam');
+const captureCanvas = document.createElement('canvas');
+const captureCtx = captureCanvas.getContext('2d');
+
+if (!room) {
+  statusEl.textContent = 'Kode room tidak ada. Buka halaman ini lewat scan QR dari tablet, atau tambahkan ?room=KODE di URL.';
+} else {
+  statusEl.textContent = 'Room: ' + room + '. Tekan tombol untuk aktifkan kamera.';
+}
+
+const roomRef = room ? db.ref('rooms/' + room) : null;
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    statusEl.textContent = 'Kamera aktif. Menunggu tablet mengambil foto...';
+    startCamBtn.style.display = 'none';
+    startPreviewLoop();
+    listenForCaptureRequest();
+  } catch (err) {
+    statusEl.textContent = 'Gagal akses kamera: ' + err.message + ' (pastikan buka lewat HTTPS)';
+  }
+}
+startCamBtn.addEventListener('click', startCamera);
+
+// Kirim preview kualitas rendah tiap 600ms (hemat kuota Firebase)
+function startPreviewLoop() {
+  setInterval(() => {
+    if (!video.videoWidth || !roomRef) return;
+    captureCanvas.width = 320;
+    captureCanvas.height = (video.videoHeight / video.videoWidth) * 320;
+    captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+    roomRef.child('preview').set(captureCanvas.toDataURL('image/jpeg', 0.4));
+  }, 600);
+}
+
+// Dengarkan permintaan capture dari tablet
+function listenForCaptureRequest() {
+  let lastTs = 0;
+  roomRef.child('captureRequest').on('value', (snap) => {
+    const ts = snap.val();
+    if (!ts || ts === lastTs) return;
+    lastTs = ts;
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+    const fullDataUrl = captureCanvas.toDataURL('image/jpeg', 0.92);
+    roomRef.child('capturedPhoto').set({ dataUrl: fullDataUrl, ts });
+  });
+}
+</script>
+</body>
+</html>
